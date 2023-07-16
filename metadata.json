@@ -1,0 +1,9 @@
+{
+  "name": "otel-bash",
+  "version": "0.0.1",
+  "description": "Bash library to instrument and trace bash scripts automatically with OpenTelemetry",
+  "author": "Serkan Ozal <serkanozal86@gmail.com> (https://github.com/serkan-ozal)",
+  "homepage": "https://github.com/serkan-ozal/otel-bash",
+  "repository": "serkan-ozal/otel-bash",
+  "license": "Apache License 2"
+}
