@@ -1,7 +1,5 @@
 #!/bin/bash
 
-_otel_bash_initialized=false
-
 # Log levels:
 # - 1: DEBUG
 # - 2: INFO
@@ -11,14 +9,7 @@ declare -r _OTEL_BASH_LOG_LEVEL_DEBUG=1
 declare -r _OTEL_BASH_LOG_LEVEL_INFO=2
 declare -r _OTEL_BASH_LOG_LEVEL_WARN=3
 declare -r _OTEL_BASH_LOG_LEVEL_ERROR=4
-
-# By default, log level is "WARN"
-_otel_bash_log_level=$_OTEL_BASH_LOG_LEVEL_WARN
-
-_otel_bash_trace_id=
-_otel_bash_parent_span_id=
-_otel_bash_latest_scope_id=
-_otel_bash_otel_cli_exist=
+declare -r _DEFAULT_OTEL_CLI_SERVER_PORT=7777
 
 ################################## UTILITIES ###################################
 ################################################################################
@@ -206,19 +197,23 @@ function _otel_bash_report_span() {
     local status_code="OK"
     local duration_ms=$(((end_time-start_time)/1000000))
 
+    local span_name="${source_file_name}:${func_name}@${line_no}"
+    if [ $line_no == 0 ]; then
+        span_name="${source_file_name}"
+    fi
     if [ $return_code != 0 ]; then
         status_code="ERROR"
     fi
 
     _otel_bash_log_info "<report_span>" \
         "Reporting span:" \
-            "name=${source_file_name}:${func_name}@${line_no}," "command=${command}," \
+            "name=${span_name}," "command=${command}," \
             "trace id=${_otel_bash_trace_id}," "parent span id=${parent_span_id}," "span id=${span_id}," \
             "duration(ms)=${duration_ms}," "return code=${return_code} ..."
 
     if [ $_otel_bash_otel_cli_exist == 1 ]; then
         otel-cli export \
-            --name "${source_file_name}:${func_name}@${line_no}" --service-name "${source_file_name}" \
+            --name "${span_name}" --service-name "${source_file_name}" \
             --trace-id "${_otel_bash_trace_id}" --span-id "${span_id}" --parent-span-id "${parent_span_id}" \
             --traceparent-disable --start-time-nanos ${start_time} --end-time-nanos ${end_time} \
             --kind INTERNAL --status-code ${status_code} \
@@ -227,7 +222,7 @@ function _otel_bash_report_span() {
                 line.no=${line_no} "command=${command}" return.code=${return_code}
     else
         _otel_bash_print "Span:" \
-            "name='${source_file_name}:${func_name}@${line_no}'," "service name='${source_file_name}'," \
+            "name='${span_name}'," "service name='${source_file_name}'," \
             "trace id='${_otel_bash_trace_id}'," "parent span id='${parent_span_id}'," "span id='${span_id}'," \
             "start time nanos=${start_time}," "end time nanos=${end_time}, ", \
             "kind='INTERNAL'," "status='${status_code}' ..."
@@ -235,6 +230,8 @@ function _otel_bash_report_span() {
 }
 
 function _otel_bash_trap_debug() {
+    local current_time1=$(_otel_bash_now_nanos)
+
     local source_file_name="${BASH_SOURCE[1]}"
     local func_name="${FUNCNAME[1]}"
     local command="${BASH_COMMAND}"
@@ -248,7 +245,6 @@ function _otel_bash_trap_debug() {
     local delimiter="///"
     local parent_span_id=""
     local span_id=$(_otel_bash_generate_span_id)
-    local current_time=$(_otel_bash_now_nanos)
     local scope_id="${SHLVL}:${source_file_name}:${func_name}"
     local existing_scope=$(_otel_bash_get_scope "$scope_id")
     local parent_scope=""
@@ -271,7 +267,7 @@ function _otel_bash_trap_debug() {
             "${existing_scope_elements[4]}" \
             "${existing_scope_elements[5]}" \
             ${existing_scope_elements[6]} \
-            ${current_time} \
+            ${current_time1} \
             ${return_code}
     fi
 
@@ -302,23 +298,9 @@ function _otel_bash_trap_debug() {
 
     # Check whether parent span has been able to resolved
     if [ -z "$parent_span_id" ]; then
-        # If parent span has not been able to resolved,
-        # try to get it from environment variable
-        # as parent process might be propagated it through environment variable
-        parent_span_id=${_otel_bash_parent_span_id}
+        # If parent span has not been able to resolved, take root span as parent span
+        parent_span_id=${_otel_bash_root_span_id}
     fi
-
-    local current_scope=""
-    current_scope+="${source_file_name}${delimiter}"
-    current_scope+="${func_name}${delimiter}"
-    current_scope+="${line_no}${delimiter}"
-    current_scope+="${command}${delimiter}"
-    current_scope+="${parent_span_id}${delimiter}"
-    current_scope+="${span_id}${delimiter}"
-    current_scope+="${current_time}"
-
-    # Save current span as the active span its scope
-    _otel_bash_put_scope "$scope_id" "${current_scope}"
 
     # Check whether
     # - current span will be root of its scope
@@ -331,6 +313,19 @@ function _otel_bash_trap_debug() {
         _otel_bash_put_parent_scope "$scope_id" "$_otel_bash_latest_scope_id"
     fi
 
+    local current_time2=$(_otel_bash_now_nanos)
+    local current_scope=""
+    current_scope+="${source_file_name}${delimiter}"
+    current_scope+="${func_name}${delimiter}"
+    current_scope+="${line_no}${delimiter}"
+    current_scope+="${command}${delimiter}"
+    current_scope+="${parent_span_id}${delimiter}"
+    current_scope+="${span_id}${delimiter}"
+    current_scope+="${current_time2}"
+
+    # Save current span as the active span its scope
+    _otel_bash_put_scope "$scope_id" "${current_scope}"
+
     # Set current scope as latest scope
     _otel_bash_latest_scope_id=$scope_id
 
@@ -340,7 +335,7 @@ function _otel_bash_trap_debug() {
     export OTEL_BASH_PARENT_SPAN_ID=$span_id
 
     # Export traceparent header so it can be picked up by child processes trace by OTEL
-    #export TRACEPARENT="00-${_otel_bash_trace_id}-${span_id}-01"
+    export TRACEPARENT="00-${_otel_bash_trace_id}-${span_id}-01"
 
     _otel_bash_log_debug "<trap_debug>" "============================"
     _otel_bash_log_debug "<trap_debug>" "TRACE ID : ${_otel_bash_trace_id}"
@@ -386,6 +381,27 @@ function _otel_bash_trap_exit() {
     _otel_bash_remove_scope "$scope_id"
     _otel_bash_remove_parent_scope "$scope_id"
 
+    local source_file_name="${BASH_SOURCE[1]}"
+    local func_name=""
+    local line_no=0
+    local command=""
+    local parent_span_id="${_otel_bash_parent_span_id}"
+    local span_id="${_otel_bash_root_span_id}"
+    local start_time=${_otel_bash_root_span_start_time}
+    local end_time=$(_otel_bash_now_nanos)
+    local return_code=$?
+
+    _otel_bash_report_span \
+        "${source_file_name}" \
+        "${func_name}" \
+        ${line_no} \
+        "${command}" \
+        "${parent_span_id}" \
+        "${span_id}" \
+        ${start_time} \
+        ${end_time} \
+        ${return_code}
+
     _otel_bash_log_debug "<trap_exit>" "============================="
     _otel_bash_log_debug "<trap_exit>" "TRACE ID : ${_otel_bash_trace_id}"
     _otel_bash_log_debug "<trap_exit>" "SOURCE   : ${BASH_SOURCE[1]}"
@@ -416,6 +432,18 @@ function _otel_bash_init() {
         set -T
         return
     fi
+
+    local init_time=$(_otel_bash_now_nanos)
+
+    # By default, log level is "WARN"
+    _otel_bash_log_level=$_OTEL_BASH_LOG_LEVEL_WARN
+
+    _otel_bash_trace_id=
+    _otel_bash_root_span_id=
+    _otel_bash_root_span_start_time=
+    _otel_bash_parent_span_id=
+    _otel_bash_latest_scope_id=
+    _otel_bash_otel_cli_exist=
 
     # Set log level
     if [ "$OTEL_BASH_LOG_LEVEL" == "DEBUG" ]; then
@@ -467,6 +495,11 @@ function _otel_bash_init() {
         fi
     fi
 
+    # Generate root span id
+    _otel_bash_root_span_id=$(_otel_bash_generate_span_id)
+    # Init root span start time
+    _otel_bash_root_span_start_time=${init_time}
+
     # Check whether "otel-cli" is exist to send traces
     if [ -x "$(command -v otel-cli)" ]; then
         _otel_bash_otel_cli_exist=1
@@ -475,6 +508,8 @@ function _otel_bash_init() {
         # If this environment variable is set, this means that current bash execution is already traced.
         # In this case, no need to start OTEL CLI server again as the server port is already in use. 
         if [ -z "$_OTEL_BASH" ]; then
+            local server_port=${OTEL_CLI_SERVER_PORT:-${_DEFAULT_OTEL_CLI_SERVER_PORT}}
+            export OTEL_CLI_SERVER_PORT=${server_port}
             # Start OTEL CLI server in background.
             # Note that we don't need to close the server manually 
             # as it shutdowns automatically when this (parent) process exits. 
