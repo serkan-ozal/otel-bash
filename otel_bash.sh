@@ -1,5 +1,19 @@
 #!/bin/bash
 
+# Copyright 2023 Serkan Ozal
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     https://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # Log levels:
 # - 1: DEBUG
 # - 2: INFO
@@ -377,7 +391,9 @@ function _otel_bash_trap_exit() {
 
     set +T
 
+    local exit_time=$(_otel_bash_now_nanos)
     local scope_id="${SHLVL}:${BASH_SOURCE[1]}:${FUNCNAME[1]}"
+
     _otel_bash_remove_scope "$scope_id"
     _otel_bash_remove_parent_scope "$scope_id"
 
@@ -388,7 +404,7 @@ function _otel_bash_trap_exit() {
     local parent_span_id="${_otel_bash_parent_span_id}"
     local span_id="${_otel_bash_root_span_id}"
     local start_time=${_otel_bash_root_span_start_time}
-    local end_time=$(_otel_bash_now_nanos)
+    local end_time=${exit_time}
     local return_code=$?
 
     _otel_bash_report_span \
@@ -432,8 +448,6 @@ function _otel_bash_init() {
         set -T
         return
     fi
-
-    local init_time=$(_otel_bash_now_nanos)
 
     # By default, log level is "WARN"
     _otel_bash_log_level=$_OTEL_BASH_LOG_LEVEL_WARN
@@ -497,8 +511,6 @@ function _otel_bash_init() {
 
     # Generate root span id
     _otel_bash_root_span_id=$(_otel_bash_generate_span_id)
-    # Init root span start time
-    _otel_bash_root_span_start_time=${init_time}
 
     # Check whether "otel-cli" is exist to send traces
     if [ -x "$(command -v otel-cli)" ]; then
@@ -512,7 +524,7 @@ function _otel_bash_init() {
             export OTEL_CLI_SERVER_PORT=${server_port}
             # Start OTEL CLI server in background.
             # Note that we don't need to close the server manually 
-            # as it shutdowns automatically when this (parent) process exits. 
+            # as it shutdowns automatically when this (parent) process exits.
             otel-cli start-server &
         fi    
     else        
@@ -523,12 +535,15 @@ function _otel_bash_init() {
             "So traces will only be printed to the console."
     fi
 
+    # Init root span start time
+    _otel_bash_root_span_start_time=$(_otel_bash_now_nanos)
+
     export _OTEL_BASH=true
-       
+
     trap '_otel_bash_trap_debug'   DEBUG
     trap '_otel_bash_trap_return'  RETURN
     trap '_otel_bash_trap_exit'    EXIT
-    
+
     _otel_bash_initialized=true
     
     set -T
