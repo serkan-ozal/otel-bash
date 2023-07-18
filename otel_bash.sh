@@ -527,7 +527,7 @@ function _otel_bash_init() {
             # as it shutdowns automatically when this (parent) process exits.
             otel-cli start-server &
         fi    
-    else        
+    else
         _otel_bash_otel_cli_exist=0
         _otel_bash_log \
             "WARN" "<init>" \
