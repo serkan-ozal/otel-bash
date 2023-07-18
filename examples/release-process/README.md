@@ -25,6 +25,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 ./release.sh
 
 ## Run With OTEL SaaS Vendors
 
+- Run example with your OTEL Saas vendor OTLP HTTP/JSON endpoint and API authentication token configs:
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=<YOUR-OTEL-VENDOR-OTLP-ENDPOINT> \
 OTEL_EXPORTER_OTLP_HEADERS=<YOUR-OTEL-VENDOR-API-AUTH-HEADER-NAME>=<YOUR-OTEL-VENDOR-API-AUTH-TOKEN> \
