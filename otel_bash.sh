@@ -25,6 +25,15 @@ declare -r _OTEL_BASH_LOG_LEVEL_WARN=3
 declare -r _OTEL_BASH_LOG_LEVEL_ERROR=4
 declare -r _DEFAULT_OTEL_CLI_SERVER_PORT=7777
 
+# Time resolvers
+declare -r _OTEL_BASH_TIME_RESOLVER_EPOCHREALTIME=1
+declare -r _OTEL_BASH_TIME_RESOLVER_PYTHON2=2
+declare -r _OTEL_BASH_TIME_RESOLVER_PYTHON3=3
+declare -r _OTEL_BASH_TIME_RESOLVER_NODE=4
+declare -r _OTEL_BASH_TIME_RESOLVER_GDATE_HIGH_RES=5
+declare -r _OTEL_BASH_TIME_RESOLVER_DATE_HIGH_RES=6
+declare -r _OTEL_BASH_TIME_RESOLVER_DATE_LOW_RES=7
+
 ################################## UTILITIES ###################################
 ################################################################################
 
@@ -39,25 +48,25 @@ function _otel_bash_log() {
 function _otel_bash_log_debug() {
     if [ $_OTEL_BASH_LOG_LEVEL_DEBUG -ge $_otel_bash_log_level ]; then
         _otel_bash_log "DEBUG" "$1" "$2"
-    fi    
+    fi
 }
 
 function _otel_bash_log_info() {
     if [ $_OTEL_BASH_LOG_LEVEL_INFO -ge $_otel_bash_log_level ] ; then
         _otel_bash_log "INFO" "$1" "$2"
-    fi    
+    fi
 }
 
 function _otel_bash_log_warn() {
     if [ $_OTEL_BASH_LOG_LEVEL_WARN -ge $_otel_bash_log_level ]; then
         _otel_bash_log "WARN" "$1" "$2"
-    fi    
+    fi
 }
 
 function _otel_bash_log_error() {
     if [ $_OTEL_BASH_LOG_LEVEL_ERROR -ge $_otel_bash_log_level ]; then
         _otel_bash_log "ERROR" "$1" "$2"
-    fi    
+    fi
 }
 
 function _otel_bash_map_hash_key() {
@@ -135,22 +144,20 @@ function _otel_bash_remove_parent_scope() {
 function _otel_bash_now_nanos() {
     local epoch=""
 
-    if [ -n "${EPOCHREALTIME-}" ]; then
+    if [ $_otel_bash_time_resolver == $_OTEL_BASH_TIME_RESOLVER_EPOCHREALTIME ]; then
         epoch=$(( ${EPOCHREALTIME/./} * 1000 ))
-    elif hash python 2>/dev/null; then
+    elif [ $_otel_bash_time_resolver == $_OTEL_BASH_TIME_RESOLVER_PYTHON2 ]; then
         epoch=$(python -c 'from time import time; print(int(round(time() * 1000000000)))')
-    elif hash python3 2>/dev/null; then
+    elif [ $_otel_bash_time_resolver == $_OTEL_BASH_TIME_RESOLVER_PYTHON3 ]; then
         epoch=$(python3 -c 'from time import time; print(int(round(time() * 1000000000)))')
-    elif hash node 2>/dev/null; then
+    elif [ $_otel_bash_time_resolver == $_OTEL_BASH_TIME_RESOLVER_NODE ]; then
         epoch=$(node -e 'console.log(Date.now() * 1000000)')
-    elif hash gdate 2>/dev/null; then
-        epoch="$(gdate +%s%9N)"
+    elif [ $_otel_bash_time_resolver == $_OTEL_BASH_TIME_RESOLVER_GDATE_HIGH_RES ]; then
+        epoch=$(gdate +%s%9N)
+    elif [ $_otel_bash_time_resolver == $_OTEL_BASH_TIME_RESOLVER_DATE_HIGH_RES ]; then
+        epoch=$(date +%s%9N)
     else
-        if [[ "$OSTYPE" == "linux"* ]]; then
-            epoch=$(date +%s%9N)
-        else
-            epoch=$(date +%s000000000)
-        fi
+        epoch=$(date +%s000000000)
     fi
 
     echo ${epoch}
@@ -474,6 +481,45 @@ function _otel_bash_init() {
         if [ ! -z "$BASH_LOG_LEVEL" ]; then
             _otel_bash_log "ERROR" "<init>" "Invalid log level: ${BASH_LOG_LEVEL}"
         fi
+    fi
+
+    # Set time resolver
+    _otel_bash_time_resolver=0
+    if [ -n "${EPOCHREALTIME-}" ]; then
+      _otel_bash_time_resolver=$_OTEL_BASH_TIME_RESOLVER_EPOCHREALTIME
+    fi
+    if hash python 2>/dev/null; then
+      python -c 'from time import time; print(int(round(time() * 1000000000)))' >/dev/null 2>&1
+      if [ $? == 0 ]; then
+        _otel_bash_time_resolver=$_OTEL_BASH_TIME_RESOLVER_PYTHON2
+      fi
+    fi
+    if [ $_otel_bash_time_resolver == 0 ] && hash python3 2>/dev/null; then
+      python3 -c 'from time import time; print(int(round(time() * 1000000000)))' >/dev/null 2>&1
+      if [ $? == 0 ]; then
+        _otel_bash_time_resolver=$_OTEL_BASH_TIME_RESOLVER_PYTHON3
+      fi
+    fi
+    if [ $_otel_bash_time_resolver == 0 ] && hash node 2>/dev/null; then
+      node -e 'console.log(Date.now() * 1000000)' >/dev/null 2>&1
+      if [ $? == 0 ]; then
+        _otel_bash_time_resolver=$_OTEL_BASH_TIME_RESOLVER_NODE
+      fi
+    fi
+    if [ $_otel_bash_time_resolver == 0 ] && [[ "$OSTYPE" == "linux"* ]] && hash gdate 2>/dev/null; then
+      gdate +%s%9N >/dev/null 2>&1
+      if [ $? == 0 ]; then
+        _otel_bash_time_resolver=$_OTEL_BASH_TIME_RESOLVER_GDATE_HIGH_RES
+      fi
+    fi
+    if [ $_otel_bash_time_resolver == 0 ] && [[ "$OSTYPE" == "linux"* ]]; then
+      date +%s%9N >/dev/null 2>&1
+      if [ $? == 0 ]; then
+        _otel_bash_time_resolver=$_OTEL_BASH_TIME_RESOLVER_DATE_HIGH_RES
+      fi
+    fi
+    if [ $_otel_bash_time_resolver == 0 ]; then
+      _otel_bash_time_resolver=$_OTEL_BASH_TIME_RESOLVER_DATE_LOW_RES
     fi
 
     # Set OTEL SDK language as "bash" through OTEL resource attributes
