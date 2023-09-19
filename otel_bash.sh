@@ -209,11 +209,13 @@ function _otel_bash_report_span() {
     local end_time=$8
     local return_code=$9
     local status_code="OK"
+    local span_kind="INTERNAL";
     local duration_ms=$(((end_time-start_time)/1000000))
 
     local span_name="${source_file_name}:${func_name}@${line_no}"
     if [ $line_no == 0 ]; then
         span_name="${source_file_name}"
+        span_kind="SERVER"
     fi
     if [ $return_code != 0 ]; then
         status_code="ERROR"
@@ -230,9 +232,9 @@ function _otel_bash_report_span() {
             --name "${span_name}" --service-name "${source_file_name}" \
             --trace-id "${_otel_bash_trace_id}" --span-id "${span_id}" --parent-span-id "${parent_span_id}" \
             --traceparent-disable --start-time-nanos ${start_time} --end-time-nanos ${end_time} \
-            --kind INTERNAL --status-code ${status_code} \
+            --kind ${span_kind} --status-code ${status_code} \
             --attributes \
-                "source.file.name=${source_file_name}" "function.name=${func_name}" \
+                "span.type=bash-script" "source.file.name=${source_file_name}" "function.name=${func_name}" \
                 line.no=${line_no} "command=${command}" return.code=${return_code}
     else
         _otel_bash_print "Span:" \
@@ -473,6 +475,9 @@ function _otel_bash_init() {
             _otel_bash_log "ERROR" "<init>" "Invalid log level: ${BASH_LOG_LEVEL}"
         fi
     fi
+
+    # Set OTEL SDK language as "bash" through OTEL resource attributes
+    export OTEL_RESOURCE_ATTRIBUTES=telemetry.sdk.language=bash
 
     # Set trace id
     if [ -z "$_otel_bash_trace_id" ]; then
